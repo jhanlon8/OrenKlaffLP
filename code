@@ -245,44 +245,107 @@
     var answer = "";
     var redirected = false;
 
+    console.log("[HS-Redirect] Script loaded");
+
     function doRedirect() {
       if (redirected) return;
       redirected = true;
-      console.log("Redirecting. Answer:", answer);
       var dest = (answer === "yes") ? urlQ : urlD;
+      console.log("[HS-Redirect] Redirecting to:", dest, "(answer was:", answer + ")");
       window.location.href = dest;
     }
 
-    // PRIMARY METHOD: Listen for HubSpot postMessage events.
-    // This works even when the form renders in a cross-origin iframe,
-    // which is the default behavior for HubSpot Forms v2.
+    // ─── METHOD 1: postMessage listener ───
+    // HubSpot iframe forms communicate via postMessage
     window.addEventListener("message", function (event) {
-      if (!event.data || event.data.type !== "hsFormCallback") return;
+      var d = event.data;
+      if (typeof d === "string") {
+        try { d = JSON.parse(d); } catch (e) { return; }
+      }
+      if (!d) return;
 
-      // Capture the field value when the form is submitted
-      if (event.data.eventName === "onFormSubmit") {
-        var fields = event.data.data;
-        if (Array.isArray(fields)) {
-          for (var i = 0; i < fields.length; i++) {
-            if (fields[i].name && fields[i].name.indexOf("accredited_investor") !== -1) {
-              answer = (fields[i].value || "").trim().toLowerCase();
-              console.log("Captured answer via postMessage:", answer);
+      // Log every HubSpot message for debugging
+      if (d.type === "hsFormCallback") {
+        console.log("[HS-Redirect] postMessage event:", d.eventName);
+      }
+
+      if (d.type === "hsFormCallback" && d.eventName === "onFormSubmit") {
+        if (Array.isArray(d.data)) {
+          for (var i = 0; i < d.data.length; i++) {
+            if (d.data[i].name && d.data[i].name.indexOf("accredited_investor") !== -1) {
+              answer = (d.data[i].value || "").trim().toLowerCase();
+              console.log("[HS-Redirect] Answer from postMessage:", answer);
             }
           }
         }
+        // Fallback: redirect after delay if onFormSubmitted never fires
+        setTimeout(doRedirect, 4000);
       }
 
-      // Redirect when HubSpot confirms the submission succeeded
-      if (event.data.eventName === "onFormSubmitted") {
-        console.log("HS confirmed submit via postMessage.");
+      if (d.type === "hsFormCallback" && d.eventName === "onFormSubmitted") {
         doRedirect();
       }
     });
 
+    // ─── METHOD 2: DOM polling ───
+    // Captures the field value continuously and detects when the form
+    // transitions to a success/processing state (works for both inline
+    // and iframe forms since we watch the parent container)
+    var submitDetected = false;
+    setInterval(function () {
+      var container = document.getElementById("hubspotForm");
+      if (!container) return;
+
+      // Try to read the select value from an inline form
+      var sel = container.querySelector('select[name*="accredited_investor"]');
+      if (sel && sel.value) {
+        answer = sel.value.trim().toLowerCase();
+      }
+
+      // Detect HubSpot inline success message
+      if (container.querySelector(".submitted-message")) {
+        console.log("[HS-Redirect] Success message found in DOM");
+        doRedirect();
+        return;
+      }
+
+      // Detect "Processing" state: the form fields disappear and only
+      // a loading/processing indicator remains. Check if form inputs
+      // are gone but the container still has content.
+      var inputs = container.querySelectorAll("input, select, textarea");
+      var text = container.innerText || "";
+      if (!submitDetected && inputs.length === 0 && text.length > 0) {
+        submitDetected = true;
+        console.log("[HS-Redirect] Form inputs gone, submit detected. Text:", text.substring(0, 80));
+        // Redirect after a short delay to let HubSpot process
+        setTimeout(doRedirect, 3000);
+      }
+    }, 500);
+
+    // ─── METHOD 3: MutationObserver ───
+    // Watches for DOM changes in the form container (catches iframe
+    // attribute changes, element additions/removals)
+    function startObserver() {
+      var container = document.getElementById("hubspotForm");
+      if (!container) { setTimeout(startObserver, 200); return; }
+
+      new MutationObserver(function () {
+        // Check for success message after any DOM change
+        if (container.querySelector(".submitted-message")) {
+          console.log("[HS-Redirect] Success message via observer");
+          doRedirect();
+        }
+      }).observe(container, { childList: true, subtree: true, attributes: true });
+    }
+    startObserver();
+
+    // ─── METHOD 4: Standard HubSpot API callbacks ───
     function createHSForm() {
       if (!(window.hbspt && window.hbspt.forms && window.hbspt.forms.create)) {
         return setTimeout(createHSForm, 50);
       }
+
+      console.log("[HS-Redirect] Calling hbspt.forms.create");
 
       window.hbspt.forms.create({
         region: "na2",
@@ -290,28 +353,40 @@
         formId: "f472f8e9-d785-4d54-b649-70fa135bcfac",
         target: "#hubspotForm",
 
-        // FALLBACK: works if HubSpot renders the form inline (not in iframe)
-        onFormSubmit: function ($form) {
+        onFormReady: function ($form) {
+          console.log("[HS-Redirect] onFormReady fired");
           try {
             var formEl = $form && $form[0] ? $form[0] : $form;
-            var field =
-              formEl.querySelector('select[name="are_you_an_accredited_investor_"]') ||
-              formEl.querySelector('select[name="are_you_an_accredited_investor"]') ||
-              formEl.querySelector('input[name="are_you_an_accredited_investor_"]') ||
-              formEl.querySelector('input[name="are_you_an_accredited_investor"]');
-
-            if (field && field.value) {
-              answer = field.value.trim().toLowerCase();
-              console.log("Captured answer via callback:", answer);
+            var field = formEl.querySelector('select[name*="accredited_investor"]') ||
+                        formEl.querySelector('input[name*="accredited_investor"]');
+            if (field) {
+              field.addEventListener("change", function () {
+                answer = this.value.trim().toLowerCase();
+                console.log("[HS-Redirect] Answer from change listener:", answer);
+              });
+              console.log("[HS-Redirect] Change listener attached to field");
             }
           } catch (e) {
-            console.log("Callback capture skipped (form likely in iframe):", e);
+            console.log("[HS-Redirect] Could not attach change listener:", e.message);
           }
         },
 
-        // FALLBACK: redirect via callback if postMessage listener hasn't fired
+        onFormSubmit: function ($form) {
+          console.log("[HS-Redirect] onFormSubmit callback fired");
+          try {
+            var formEl = $form && $form[0] ? $form[0] : $form;
+            var field = formEl.querySelector('select[name*="accredited_investor"]') ||
+                        formEl.querySelector('input[name*="accredited_investor"]');
+            if (field && field.value) {
+              answer = field.value.trim().toLowerCase();
+              console.log("[HS-Redirect] Answer from onFormSubmit:", answer);
+            }
+          } catch (e) {}
+          setTimeout(doRedirect, 4000);
+        },
+
         onFormSubmitted: function () {
-          console.log("HS confirmed submit via callback.");
+          console.log("[HS-Redirect] onFormSubmitted callback fired");
           doRedirect();
         }
       });
