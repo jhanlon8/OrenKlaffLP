@@ -242,7 +242,42 @@
   (function () {
     var urlD = "https://events.intersectioncapital.com/the-game-of-money-confirmed-d";
     var urlQ = "https://events.intersectioncapital.com/the-game-of-money-confirmed-q";
-    var answer = ""; // store answer safely
+    var answer = "";
+    var redirected = false;
+
+    function doRedirect() {
+      if (redirected) return;
+      redirected = true;
+      console.log("Redirecting. Answer:", answer);
+      var dest = (answer === "yes") ? urlQ : urlD;
+      window.location.href = dest;
+    }
+
+    // PRIMARY METHOD: Listen for HubSpot postMessage events.
+    // This works even when the form renders in a cross-origin iframe,
+    // which is the default behavior for HubSpot Forms v2.
+    window.addEventListener("message", function (event) {
+      if (!event.data || event.data.type !== "hsFormCallback") return;
+
+      // Capture the field value when the form is submitted
+      if (event.data.eventName === "onFormSubmit") {
+        var fields = event.data.data;
+        if (Array.isArray(fields)) {
+          for (var i = 0; i < fields.length; i++) {
+            if (fields[i].name && fields[i].name.indexOf("accredited_investor") !== -1) {
+              answer = (fields[i].value || "").trim().toLowerCase();
+              console.log("Captured answer via postMessage:", answer);
+            }
+          }
+        }
+      }
+
+      // Redirect when HubSpot confirms the submission succeeded
+      if (event.data.eventName === "onFormSubmitted") {
+        console.log("HS confirmed submit via postMessage.");
+        doRedirect();
+      }
+    });
 
     function createHSForm() {
       if (!(window.hbspt && window.hbspt.forms && window.hbspt.forms.create)) {
@@ -255,30 +290,29 @@
         formId: "f472f8e9-d785-4d54-b649-70fa135bcfac",
         target: "#hubspotForm",
 
-        // capture BEFORE HubSpot changes the form UI
+        // FALLBACK: works if HubSpot renders the form inline (not in iframe)
         onFormSubmit: function ($form) {
           try {
             var formEl = $form && $form[0] ? $form[0] : $form;
             var field =
-              (formEl && formEl.querySelector('select[name="are_you_an_accredited_investor_"]')) ||
-              (formEl && formEl.querySelector('select[name="are_you_an_accredited_investor"]'));
+              formEl.querySelector('select[name="are_you_an_accredited_investor_"]') ||
+              formEl.querySelector('select[name="are_you_an_accredited_investor"]') ||
+              formEl.querySelector('input[name="are_you_an_accredited_investor_"]') ||
+              formEl.querySelector('input[name="are_you_an_accredited_investor"]');
 
-            answer = field && field.value ? field.value.trim().toLowerCase() : "";
-            console.log("Captured answer:", answer);
+            if (field && field.value) {
+              answer = field.value.trim().toLowerCase();
+              console.log("Captured answer via callback:", answer);
+            }
           } catch (e) {
-            answer = "";
-            console.log("Capture error:", e);
+            console.log("Callback capture skipped (form likely in iframe):", e);
           }
         },
 
-        // redirect only when HubSpot confirms success
+        // FALLBACK: redirect via callback if postMessage listener hasn't fired
         onFormSubmitted: function () {
-          console.log("HS confirmed submit. Redirecting...");
-          var dest = (answer === "yes") ? urlQ : urlD;
-
-          setTimeout(function () {
-            window.location.href = dest;
-          }, 200);
+          console.log("HS confirmed submit via callback.");
+          doRedirect();
         }
       });
     }
