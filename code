@@ -236,18 +236,36 @@
 
 
  <!-- HubSpot Forms -->
+
+<!-- Our own accredited-investor question (outside the iframe so we can read it) -->
+<div id="investorQuestion" style="margin-bottom: 1.25rem;">
+  <label style="color: var(--dark); font-size: 0.875rem; font-weight: 600; display: block; margin-bottom: 0.4rem;">
+    Are you an accredited investor? <span style="color: var(--red);">*</span>
+  </label>
+  <select id="investorSelect" style="width: 100%; background: #F3F4F6; border: 1px solid #D1D5DB; color: #0A0A0A; padding: 0.875rem; font-family: 'IBM Plex Mono', monospace; font-size: 0.95rem; border-radius: 6px; cursor: pointer;">
+    <option value="">-- Please Select --</option>
+    <option value="yes">Yes</option>
+    <option value="no">No</option>
+  </select>
+</div>
+
 <div class="hs-form-frame" data-region="na2" data-form-id="2f56ba3f-6c8a-4320-ac5e-f4adcc7eb9d2" data-portal-id="50180818"></div>
 
 <script>
   (function () {
     var urlD = "https://events.intersectioncapital.com/the-game-of-money-confirmed-d";
     var urlQ = "https://events.intersectioncapital.com/the-game-of-money-confirmed-q";
-    var answer = "";
     var redirected = false;
+
+    function getAnswer() {
+      var sel = document.getElementById("investorSelect");
+      return sel ? sel.value.trim().toLowerCase() : "";
+    }
 
     function doRedirect() {
       if (redirected) return;
       redirected = true;
+      var answer = getAnswer();
       var dest = (answer === "yes") ? urlQ : urlD;
       console.log("[HS-Redirect] Redirecting to:", dest, "(answer:", answer + ")");
       window.location.href = dest;
@@ -263,14 +281,7 @@
 
       console.log("[HS-Redirect] postMessage:", d.eventName);
 
-      // Capture the accredited investor answer on submit
-      if (d.eventName === "onFormSubmit" && Array.isArray(d.data)) {
-        for (var i = 0; i < d.data.length; i++) {
-          if (d.data[i].name && d.data[i].name.indexOf("accredited_investor") !== -1) {
-            answer = (d.data[i].value || "").trim().toLowerCase();
-            console.log("[HS-Redirect] Captured answer:", answer);
-          }
-        }
+      if (d.eventName === "onFormSubmit") {
         // Fallback redirect in case onFormSubmitted doesn't fire
         setTimeout(doRedirect, 4000);
       }
