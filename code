@@ -174,7 +174,7 @@
 
 </style>
       
-<script charset="utf-8" type="text/javascript" src="https://js-na2.hsforms.net/forms/v2.js"></script>
+<script src="https://js-na2.hsforms.net/forms/embed/50180818.js" defer></script>
 
  {{ standard_header_includes }} 
 </head>
@@ -236,54 +236,50 @@
 
 
  <!-- HubSpot Forms -->
-<div id="hubspotForm"></div>
+<div class="hs-form-frame" data-region="na2" data-form-id="2f56ba3f-6c8a-4320-ac5e-f4adcc7eb9d2" data-portal-id="50180818"></div>
 
 <script>
   (function () {
     var urlD = "https://events.intersectioncapital.com/the-game-of-money-confirmed-d";
     var urlQ = "https://events.intersectioncapital.com/the-game-of-money-confirmed-q";
-    var answer = ""; // store answer safely
+    var answer = "";
+    var redirected = false;
 
-    function createHSForm() {
-      if (!(window.hbspt && window.hbspt.forms && window.hbspt.forms.create)) {
-        return setTimeout(createHSForm, 50);
-      }
-
-      window.hbspt.forms.create({
-        region: "na2",
-        portalId: "50180818",
-        formId: "f472f8e9-d785-4d54-b649-70fa135bcfac",
-        target: "#hubspotForm",
-
-        // capture BEFORE HubSpot changes the form UI
-        onFormSubmit: function ($form) {
-          try {
-            var formEl = $form && $form[0] ? $form[0] : $form;
-            var field =
-              (formEl && formEl.querySelector('select[name="are_you_an_accredited_investor_"]')) ||
-              (formEl && formEl.querySelector('select[name="are_you_an_accredited_investor"]'));
-
-            answer = field && field.value ? field.value.trim().toLowerCase() : "";
-            console.log("Captured answer:", answer);
-          } catch (e) {
-            answer = "";
-            console.log("Capture error:", e);
-          }
-        },
-
-        // redirect only when HubSpot confirms success
-        onFormSubmitted: function () {
-          console.log("HS confirmed submit. Redirecting...");
-          var dest = (answer === "yes") ? urlQ : urlD;
-
-          setTimeout(function () {
-            window.location.href = dest;
-          }, 200);
-        }
-      });
+    function doRedirect() {
+      if (redirected) return;
+      redirected = true;
+      var dest = (answer === "yes") ? urlQ : urlD;
+      console.log("[HS-Redirect] Redirecting to:", dest, "(answer:", answer + ")");
+      window.location.href = dest;
     }
 
-    createHSForm();
+    // Listen for HubSpot postMessage events from the iframe
+    window.addEventListener("message", function (event) {
+      var d = event.data;
+      if (typeof d === "string") {
+        try { d = JSON.parse(d); } catch (e) { return; }
+      }
+      if (!d || d.type !== "hsFormCallback") return;
+
+      console.log("[HS-Redirect] postMessage:", d.eventName);
+
+      // Capture the accredited investor answer on submit
+      if (d.eventName === "onFormSubmit" && Array.isArray(d.data)) {
+        for (var i = 0; i < d.data.length; i++) {
+          if (d.data[i].name && d.data[i].name.indexOf("accredited_investor") !== -1) {
+            answer = (d.data[i].value || "").trim().toLowerCase();
+            console.log("[HS-Redirect] Captured answer:", answer);
+          }
+        }
+        // Fallback redirect in case onFormSubmitted doesn't fire
+        setTimeout(doRedirect, 4000);
+      }
+
+      // Redirect when HubSpot confirms success
+      if (d.eventName === "onFormSubmitted") {
+        setTimeout(doRedirect, 200);
+      }
+    });
   })();
 </script>
 
