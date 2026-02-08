@@ -172,6 +172,23 @@
     width: 100%;
   }
 
+/* Match our external investor select to HubSpot styling */
+#investorSelect:focus {
+  outline: none;
+  border-color: #80b0d5;
+  background-color: #fff;
+  box-shadow: 0 0 4px 1px rgba(0, 208, 228, 0.3);
+}
+#investorSelect:hover {
+  border-color: #80b0d5;
+}
+
+/* Hide the duplicate accredited-investor field inside the HubSpot form */
+#hubspotForm .hs_are_you_an_accredited_investor_,
+#hubspotForm .hs-fieldtype-select:has(select[name="are_you_an_accredited_investor_"]) {
+  display: none !important;
+}
+
 </style>
       
 <script charset="utf-8" type="text/javascript" src="https://js-na2.hsforms.net/forms/v2.js"></script>
@@ -238,11 +255,11 @@
  <!-- HubSpot Forms -->
 
 <!-- Our own accredited-investor question (outside the iframe so we can read it) -->
-<div id="investorQuestion" style="margin-bottom: 1.25rem;">
-  <label style="color: var(--dark); font-size: 0.875rem; font-weight: 600; display: block; margin-bottom: 0.4rem;">
-    Are you an accredited investor? <span style="color: var(--red);">*</span>
+<div id="investorQuestion" style="margin-bottom: 20px;">
+  <label style="color: #33475b; font-size: 14px; font-weight: 500; font-family: 'Lexend Deca', Helvetica, Arial, sans-serif; display: block; margin-bottom: 4px; line-height: 20px;">
+    Are you an accredited investor? <span style="color: #e8384f;">*</span>
   </label>
-  <select id="investorSelect" style="width: 100%; background: #F3F4F6; border: 1px solid #D1D5DB; color: #0A0A0A; padding: 0.875rem; font-family: 'IBM Plex Mono', monospace; font-size: 0.95rem; border-radius: 6px; cursor: pointer;">
+  <select id="investorSelect" style="width: 100%; background-color: #f5f8fa; border: 1px solid #cbd6e2; color: #33475b; padding: 9px 10px; font-size: 16px; font-family: 'Lexend Deca', Helvetica, Arial, sans-serif; border-radius: 3px; cursor: pointer; height: 40px; line-height: 22px; -webkit-appearance: none; -moz-appearance: none; appearance: none; background-image: url('data:image/svg+xml;charset=US-ASCII,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2214%22%20height%3D%228%22%20viewBox%3D%220%200%2014%208%22%3E%3Cpath%20fill%3D%22%2333475b%22%20d%3D%22M7%208L0%200h14z%22%2F%3E%3C%2Fsvg%3E'); background-repeat: no-repeat; background-position: right 10px center; background-size: 10px 6px;">
     <option value="">-- Please Select --</option>
     <option value="yes">Yes</option>
     <option value="no">No</option>
@@ -401,12 +418,36 @@
         formId: "f472f8e9-d785-4d54-b649-70fa135bcfac",
         target: "#hubspotForm",
 
-        onFormReady: function () {
+        onFormReady: function ($form) {
           console.log("[HS-Redirect] onFormReady");
+          // Try to hide the duplicate investor field inside the HubSpot form
+          try {
+            var formEl = ($form && $form[0]) ? $form[0] : $form;
+            if (formEl) {
+              var hsField = formEl.querySelector('select[name*="accredited_investor"]');
+              if (hsField) {
+                var fieldWrapper = hsField.closest('.hs-form-field') || hsField.parentElement.parentElement;
+                if (fieldWrapper) fieldWrapper.style.display = 'none';
+                console.log("[HS-Redirect] Hid duplicate investor field in HS form");
+              }
+            }
+          } catch (e) {}
         },
 
-        onFormSubmit: function () {
+        onFormSubmit: function ($form) {
           console.log("[HS-Redirect] onFormSubmit");
+          // Sync our external dropdown value into the HubSpot form field
+          try {
+            var answer = getAnswer();
+            var formEl = ($form && $form[0]) ? $form[0] : $form;
+            if (formEl && answer) {
+              var hsField = formEl.querySelector('select[name*="accredited_investor"]');
+              if (hsField) {
+                hsField.value = answer;
+                console.log("[HS-Redirect] Synced answer to HS form:", answer);
+              }
+            }
+          } catch (e) {}
           setTimeout(doRedirect, 4000);
         },
 
