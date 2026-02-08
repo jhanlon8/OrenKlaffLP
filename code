@@ -236,110 +236,158 @@
 
 
  <!-- HubSpot Forms -->
+
+<!-- Our own accredited-investor question (outside the iframe so we can read it) -->
+<div id="investorQuestion" style="margin-bottom: 1.25rem;">
+  <label style="color: var(--dark); font-size: 0.875rem; font-weight: 600; display: block; margin-bottom: 0.4rem;">
+    Are you an accredited investor? <span style="color: var(--red);">*</span>
+  </label>
+  <select id="investorSelect" style="width: 100%; background: #F3F4F6; border: 1px solid #D1D5DB; color: #0A0A0A; padding: 0.875rem; font-family: 'IBM Plex Mono', monospace; font-size: 0.95rem; border-radius: 6px; cursor: pointer;">
+    <option value="">-- Please Select --</option>
+    <option value="yes">Yes</option>
+    <option value="no">No</option>
+  </select>
+</div>
+
 <div id="hubspotForm"></div>
 
 <script>
   (function () {
     var urlD = "https://events.intersectioncapital.com/the-game-of-money-confirmed-d";
     var urlQ = "https://events.intersectioncapital.com/the-game-of-money-confirmed-q";
-    var answer = "";
     var redirected = false;
 
     console.log("[HS-Redirect] Script loaded");
 
+    function getAnswer() {
+      var sel = document.getElementById("investorSelect");
+      return sel ? sel.value.trim().toLowerCase() : "";
+    }
+
     function doRedirect() {
       if (redirected) return;
       redirected = true;
+      var answer = getAnswer();
       var dest = (answer === "yes") ? urlQ : urlD;
-      console.log("[HS-Redirect] Redirecting to:", dest, "(answer was:", answer + ")");
+      console.log("[HS-Redirect] REDIRECTING → " + dest + " (answer: " + answer + ")");
       window.location.href = dest;
     }
 
-    // ─── METHOD 1: postMessage listener ───
-    // HubSpot iframe forms communicate via postMessage
+    // ─── METHOD 1: Iframe height monitoring ───
+    // HubSpot auto-resizes the iframe. When "Processing..." replaces
+    // form fields, the height changes. We detect that change.
+    var iframeReady = false;
+    var baselineHeight = 0;
+    var heightSettled = false;
+
+    function watchIframeHeight() {
+      var container = document.getElementById("hubspotForm");
+      if (!container) return;
+      var iframe = container.querySelector("iframe");
+      if (!iframe) return;
+
+      var h = iframe.offsetHeight || 0;
+      if (h === 0) return;
+
+      // Let the form settle for 5 seconds before monitoring
+      if (!iframeReady) {
+        iframeReady = true;
+        setTimeout(function () {
+          var f = container.querySelector("iframe");
+          if (f) {
+            baselineHeight = f.offsetHeight || 0;
+            heightSettled = true;
+            console.log("[HS-Redirect] Baseline iframe height:", baselineHeight);
+          }
+        }, 5000);
+        return;
+      }
+
+      // After baseline is set, detect significant height decrease (form → Processing...)
+      if (heightSettled && h > 0 && baselineHeight > 0 && h < baselineHeight * 0.6) {
+        console.log("[HS-Redirect] Iframe height dropped:", baselineHeight, "→", h);
+        setTimeout(doRedirect, 2000);
+      }
+    }
+
+    setInterval(watchIframeHeight, 400);
+
+    // ─── METHOD 2: Iframe load event ───
+    // Fires if HubSpot navigates the iframe to a new page after submit
+    var iframeLoadCount = 0;
+    function watchIframeLoad() {
+      var container = document.getElementById("hubspotForm");
+      if (!container) { setTimeout(watchIframeLoad, 300); return; }
+      var iframe = container.querySelector("iframe");
+      if (!iframe) { setTimeout(watchIframeLoad, 300); return; }
+
+      console.log("[HS-Redirect] Iframe found, watching load events");
+      iframe.addEventListener("load", function () {
+        iframeLoadCount++;
+        console.log("[HS-Redirect] Iframe load #" + iframeLoadCount);
+        if (iframeLoadCount >= 2) {
+          setTimeout(doRedirect, 1500);
+        }
+      });
+    }
+    watchIframeLoad();
+
+    // ─── METHOD 3: MutationObserver on iframe attributes ───
+    // Detects style/height/class changes on the iframe element itself
+    function watchIframeMutations() {
+      var container = document.getElementById("hubspotForm");
+      if (!container) { setTimeout(watchIframeMutations, 300); return; }
+
+      new MutationObserver(function (mutations) {
+        // Check for inline success message
+        if (container.querySelector(".submitted-message")) {
+          console.log("[HS-Redirect] .submitted-message found");
+          doRedirect();
+          return;
+        }
+
+        // Check iframe height changes via style mutations
+        if (heightSettled && baselineHeight > 0) {
+          var iframe = container.querySelector("iframe");
+          if (iframe) {
+            var h = iframe.offsetHeight || 0;
+            if (h > 0 && h < baselineHeight * 0.6) {
+              console.log("[HS-Redirect] Height change via observer:", baselineHeight, "→", h);
+              setTimeout(doRedirect, 2000);
+            }
+          }
+        }
+      }).observe(container, { childList: true, subtree: true, attributes: true, attributeFilter: ["style", "height", "class"] });
+    }
+    watchIframeMutations();
+
+    // ─── METHOD 4: postMessage listener ───
     window.addEventListener("message", function (event) {
       var d = event.data;
       if (typeof d === "string") {
         try { d = JSON.parse(d); } catch (e) { return; }
       }
-      if (!d) return;
+      if (!d || d.type !== "hsFormCallback") return;
 
-      // Log every HubSpot message for debugging
-      if (d.type === "hsFormCallback") {
-        console.log("[HS-Redirect] postMessage event:", d.eventName);
-      }
+      console.log("[HS-Redirect] postMessage:", d.eventName);
 
-      if (d.type === "hsFormCallback" && d.eventName === "onFormSubmit") {
-        if (Array.isArray(d.data)) {
-          for (var i = 0; i < d.data.length; i++) {
-            if (d.data[i].name && d.data[i].name.indexOf("accredited_investor") !== -1) {
-              answer = (d.data[i].value || "").trim().toLowerCase();
-              console.log("[HS-Redirect] Answer from postMessage:", answer);
-            }
+      if (d.eventName === "onFormSubmit" && Array.isArray(d.data)) {
+        for (var i = 0; i < d.data.length; i++) {
+          if (d.data[i].name && d.data[i].name.indexOf("accredited_investor") !== -1) {
+            // Also update our external select to match
+            var sel = document.getElementById("investorSelect");
+            if (sel) sel.value = d.data[i].value || "";
           }
         }
-        // Fallback: redirect after delay if onFormSubmitted never fires
         setTimeout(doRedirect, 4000);
       }
 
-      if (d.type === "hsFormCallback" && d.eventName === "onFormSubmitted") {
+      if (d.eventName === "onFormSubmitted") {
         doRedirect();
       }
     });
 
-    // ─── METHOD 2: DOM polling ───
-    // Captures the field value continuously and detects when the form
-    // transitions to a success/processing state (works for both inline
-    // and iframe forms since we watch the parent container)
-    var submitDetected = false;
-    setInterval(function () {
-      var container = document.getElementById("hubspotForm");
-      if (!container) return;
-
-      // Try to read the select value from an inline form
-      var sel = container.querySelector('select[name*="accredited_investor"]');
-      if (sel && sel.value) {
-        answer = sel.value.trim().toLowerCase();
-      }
-
-      // Detect HubSpot inline success message
-      if (container.querySelector(".submitted-message")) {
-        console.log("[HS-Redirect] Success message found in DOM");
-        doRedirect();
-        return;
-      }
-
-      // Detect "Processing" state: the form fields disappear and only
-      // a loading/processing indicator remains. Check if form inputs
-      // are gone but the container still has content.
-      var inputs = container.querySelectorAll("input, select, textarea");
-      var text = container.innerText || "";
-      if (!submitDetected && inputs.length === 0 && text.length > 0) {
-        submitDetected = true;
-        console.log("[HS-Redirect] Form inputs gone, submit detected. Text:", text.substring(0, 80));
-        // Redirect after a short delay to let HubSpot process
-        setTimeout(doRedirect, 3000);
-      }
-    }, 500);
-
-    // ─── METHOD 3: MutationObserver ───
-    // Watches for DOM changes in the form container (catches iframe
-    // attribute changes, element additions/removals)
-    function startObserver() {
-      var container = document.getElementById("hubspotForm");
-      if (!container) { setTimeout(startObserver, 200); return; }
-
-      new MutationObserver(function () {
-        // Check for success message after any DOM change
-        if (container.querySelector(".submitted-message")) {
-          console.log("[HS-Redirect] Success message via observer");
-          doRedirect();
-        }
-      }).observe(container, { childList: true, subtree: true, attributes: true });
-    }
-    startObserver();
-
-    // ─── METHOD 4: Standard HubSpot API callbacks ───
+    // ─── METHOD 5: Standard HubSpot callbacks ───
     function createHSForm() {
       if (!(window.hbspt && window.hbspt.forms && window.hbspt.forms.create)) {
         return setTimeout(createHSForm, 50);
@@ -353,40 +401,17 @@
         formId: "f472f8e9-d785-4d54-b649-70fa135bcfac",
         target: "#hubspotForm",
 
-        onFormReady: function ($form) {
-          console.log("[HS-Redirect] onFormReady fired");
-          try {
-            var formEl = $form && $form[0] ? $form[0] : $form;
-            var field = formEl.querySelector('select[name*="accredited_investor"]') ||
-                        formEl.querySelector('input[name*="accredited_investor"]');
-            if (field) {
-              field.addEventListener("change", function () {
-                answer = this.value.trim().toLowerCase();
-                console.log("[HS-Redirect] Answer from change listener:", answer);
-              });
-              console.log("[HS-Redirect] Change listener attached to field");
-            }
-          } catch (e) {
-            console.log("[HS-Redirect] Could not attach change listener:", e.message);
-          }
+        onFormReady: function () {
+          console.log("[HS-Redirect] onFormReady");
         },
 
-        onFormSubmit: function ($form) {
-          console.log("[HS-Redirect] onFormSubmit callback fired");
-          try {
-            var formEl = $form && $form[0] ? $form[0] : $form;
-            var field = formEl.querySelector('select[name*="accredited_investor"]') ||
-                        formEl.querySelector('input[name*="accredited_investor"]');
-            if (field && field.value) {
-              answer = field.value.trim().toLowerCase();
-              console.log("[HS-Redirect] Answer from onFormSubmit:", answer);
-            }
-          } catch (e) {}
+        onFormSubmit: function () {
+          console.log("[HS-Redirect] onFormSubmit");
           setTimeout(doRedirect, 4000);
         },
 
         onFormSubmitted: function () {
-          console.log("[HS-Redirect] onFormSubmitted callback fired");
+          console.log("[HS-Redirect] onFormSubmitted");
           doRedirect();
         }
       });
